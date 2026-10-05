@@ -8,9 +8,7 @@ from logging import getLogger
 from PIL import Image
 
 from odoo import api, fields, models
-from odoo.tools.pdf import PdfFileReader as PdfReader
-from odoo.tools.pdf import PdfFileWriter as PdfWriter
-from odoo.tools.pdf import PdfReadError
+from odoo.tools.pdf import PdfReader, PdfReadError, PdfWriter
 from odoo.tools.safe_eval import safe_eval
 
 logger = getLogger(__name__)
@@ -58,10 +56,12 @@ class Report(models.Model):
                 company = docs.company_ids[:1]
         return company or self.env.company
 
-    def _render_qweb_pdf(self, report_ref, res_ids=None, data=None):
+    def _pre_render_qweb_pdf(self, report_ref, res_ids=None, data=None):
+        # In 20.0 the PDF is no longer only produced by ``_render_qweb_pdf``:
+        # other callers (e.g. account.move.send) use ``_pre_render_qweb_pdf``.
         if not self.env.context.get("res_ids"):
             self = self.with_context(res_ids=res_ids)
-        return super()._render_qweb_pdf(report_ref, res_ids=res_ids, data=data)
+        return super()._pre_render_qweb_pdf(report_ref, res_ids=res_ids, data=data)
 
     @staticmethod
     def pdf_has_usable_pages(numpages):
@@ -76,28 +76,31 @@ class Report(models.Model):
         return True
 
     @api.model
-    def _run_wkhtmltopdf(
+    def _run_pdf_engine_without_processing(
         self,
+        engine_name,
         bodies,
         report_ref=False,
+        *,
         header=None,
         footer=None,
         landscape=False,
         specific_paperformat_args=None,
-        set_viewport_size=False,
+        **kwargs,
     ):
-        result = super()._run_wkhtmltopdf(
+        result = super()._run_pdf_engine_without_processing(
+            engine_name,
             bodies,
             report_ref=report_ref,
             header=header,
             footer=footer,
             landscape=landscape,
             specific_paperformat_args=specific_paperformat_args,
-            set_viewport_size=set_viewport_size,
+            **kwargs,
         )
 
         docids = self.env.context.get("res_ids", False)
-        report_sudo = self._get_report(report_ref)
+        report_sudo = self._get_report(report_ref) if report_ref else self
         watermark = None
         if self.pdf_watermark or report_sudo.pdf_watermark:
             watermark = b64decode(self.pdf_watermark or report_sudo.pdf_watermark)
@@ -138,26 +141,22 @@ class Report(models.Model):
                     resolution = resolution[0]
                 image.save(pdf_buffer, "pdf", resolution=resolution)
                 pdf_watermark = PdfReader(pdf_buffer)
-            except Exception as e:
-                logger.exception("Failed to load watermark", e)
+            except Exception:
+                logger.exception("Failed to load watermark")
 
         if not pdf_watermark:
             logger.error("No usable watermark found, got %s...", watermark[:100])
             return result
 
-        if not self.pdf_has_usable_pages(pdf_watermark.numPages):
+        if not self.pdf_has_usable_pages(len(pdf_watermark.pages)):
             return result
 
         for page in PdfReader(BytesIO(result)).pages:
-            watermark_page = pdf.addBlankPage(
-                page.mediaBox.getWidth(), page.mediaBox.getHeight()
+            watermark_page = pdf.add_blank_page(
+                page.mediabox.width, page.mediabox.height
             )
-            # merge_page is >= 2.0, mergePage < 2.0
-            merge_page = (
-                getattr(watermark_page, "merge_page", None) or watermark_page.mergePage
-            )
-            merge_page(pdf_watermark.getPage(0))
-            merge_page(page)
+            watermark_page.merge_page(pdf_watermark.pages[0])
+            watermark_page.merge_page(page)
 
         pdf_content = BytesIO()
         pdf.write(pdf_content)
