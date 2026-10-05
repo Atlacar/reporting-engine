@@ -4,7 +4,7 @@
         <field name="model">base.document.layout</field>
         <field name="inherit_id" ref="web.view_base_document_layout" />
         <field name="arch" type="xml">
-            <xpath expr="//field[@name='layout_background']" position="after">
+            <xpath expr="//field[@name='paperformat_id']" position="after">
                 <field name="pdf_watermark" widget="pdf_viewer" />
                 <div
                     role="alert"
