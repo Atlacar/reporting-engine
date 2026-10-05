@@ -8,6 +8,7 @@ from logging import getLogger
 from PIL import Image
 
 from odoo import api, fields, models
+from odoo.tools.binary import BinaryValue
 from odoo.tools.pdf import PdfReader, PdfReadError, PdfWriter
 from odoo.tools.safe_eval import safe_eval
 
@@ -64,6 +65,19 @@ class Report(models.Model):
         return super()._pre_render_qweb_pdf(report_ref, res_ids=res_ids, data=data)
 
     @staticmethod
+    def _get_watermark_content(value):
+        """Return the raw bytes of a watermark value.
+
+        Binary fields hold ``BinaryValue`` objects in 20.0. The watermark
+        expression may also return base64 encoded data, as documented.
+        """
+        if not value:
+            return None
+        if isinstance(value, BinaryValue):
+            return value.content
+        return b64decode(value)
+
+    @staticmethod
     def pdf_has_usable_pages(numpages):
         if numpages < 1:
             logger.error("Your watermark pdf does not contain any pages")
@@ -103,11 +117,13 @@ class Report(models.Model):
         report_sudo = self._get_report(report_ref) if report_ref else self
         watermark = None
         if self.pdf_watermark or report_sudo.pdf_watermark:
-            watermark = b64decode(self.pdf_watermark or report_sudo.pdf_watermark)
+            watermark = self._get_watermark_content(
+                self.pdf_watermark or report_sudo.pdf_watermark
+            )
         elif self.use_company_watermark or report_sudo.use_company_watermark:
             company = self._get_watermark_company(docids, report_sudo)
             if company.pdf_watermark:
-                watermark = b64decode(company.pdf_watermark)
+                watermark = self._get_watermark_content(company.pdf_watermark)
         elif docids:
             watermark = safe_eval(
                 self.pdf_watermark_expression
@@ -118,8 +134,7 @@ class Report(models.Model):
                     docs=self.env[self.model or report_sudo.model].browse(docids),
                 ),
             )
-            if watermark:
-                watermark = b64decode(watermark)
+            watermark = self._get_watermark_content(watermark)
 
         if not watermark:
             return result

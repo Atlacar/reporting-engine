@@ -25,7 +25,7 @@ class TestReportQwebPdfWatermark(HttpCase):
                             <div class="page">
                                 <ul>
                                     <li t-foreach="docs" t-as="doc">
-                                        <t t-esc="doc.name" />
+                                        <t t-out="doc.name" />
                                     </li>
                                 </ul>
                             </div>
@@ -53,7 +53,7 @@ class TestReportQwebPdfWatermark(HttpCase):
         # Ensure company has a logo for testing
         if not cls.env.user.company_id.logo:
             # Create a minimal test logo (1x1 transparent PNG)
-            cls.env.user.company_id.logo = b"".join([logo1.encode(), logo2.encode()])
+            cls.env.user.company_id.logo = logo1 + logo2
 
     def test_report_qweb_pdf_watermark(self):
         Image.init()
