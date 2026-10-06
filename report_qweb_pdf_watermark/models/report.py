@@ -138,8 +138,8 @@ class Report(models.Model):
                     resolution = resolution[0]
                 image.save(pdf_buffer, "pdf", resolution=resolution)
                 pdf_watermark = PdfReader(pdf_buffer)
-            except Exception as e:
-                logger.exception("Failed to load watermark", e)
+            except Exception:
+                logger.exception("Failed to load watermark")
 
         if not pdf_watermark:
             logger.error("No usable watermark found, got %s...", watermark[:100])

@@ -1,12 +1,17 @@
 # © 2016 Therp BV <http://therp.nl>
 # Copyright 2023 Onestein - Anjeel Haria
 # License AGPL-3.0 or later (http://www.gnu.org/licenses/agpl.html).
+import base64
+
 from PIL import Image
 
 from odoo import Command
 from odoo.tests.common import HttpCase, TransactionCase, tagged
 
 
+# post_install: rendering web.external_layout needs the assets of all
+# installed modules (e.g. website) to be loaded
+@tagged("post_install", "-at_install")
 class TestReportQwebPdfWatermark(HttpCase):
     @classmethod
     def setUpClass(cls):
@@ -73,6 +78,21 @@ class TestReportQwebPdfWatermark(HttpCase):
         self.test_report.write({"use_company_watermark": True})
         self.env.user.company_id.write({"pdf_watermark": self.env.user.company_id.logo})
         self._test_report_images(3)
+
+    def test_report_qweb_pdf_watermark_invalid(self):
+        # unusable watermark data is logged and the report is left untouched
+        self.test_report.write(
+            {
+                "pdf_watermark_expression": False,
+                "pdf_watermark": base64.b64encode(b"not a pdf nor an image"),
+            }
+        )
+        with self.assertLogs(
+            "odoo.addons.report_qweb_pdf_watermark.models.report", level="ERROR"
+        ) as logs:
+            self._test_report_images(2)
+        self.assertTrue(any("Failed to load watermark" in o for o in logs.output))
+        self.assertTrue(any("No usable watermark found" in o for o in logs.output))
 
     def _test_report_images(self, number):
         pdf, _ = (
