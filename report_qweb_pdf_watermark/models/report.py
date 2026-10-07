@@ -57,21 +57,29 @@ class Report(models.Model):
                 company = docs.company_ids[:1]
         return company or self.env.company
 
-    def _pre_render_qweb_pdf(self, report_ref, res_ids=None, data=None):
-        # In 20.0 the PDF is no longer only produced by ``_render_qweb_pdf``:
-        # other callers (e.g. account.move.send) use ``_pre_render_qweb_pdf``.
-        # No PDF engine overrides this method, so merging the watermark in the
-        # streams it returns works with every engine and whatever the module
-        # load order (engines such as Paper Muncher do not call ``super()``
-        # for their own engine in ``_run_pdf_engine*``).
-        if not self.env.context.get("res_ids"):
-            self = self.with_context(res_ids=res_ids)
+    def _render_qweb_pdf_prepare_streams(self, report_ref, data, res_ids=None):
+        # The watermark is merged in the streams core renders for the records,
+        # before any module that depends on ``web`` (hence loaded after this
+        # one) gets to append pages to them: e.g. sale_pdf_quote_builder adds
+        # the quotation header, footer and product documents, which carry
+        # their own look and must not be stamped. No PDF engine overrides this
+        # method, so it works with every engine and whatever their load order
+        # (Paper Muncher does not call ``super()`` for its own engine in
+        # ``_run_pdf_engine*``). The company and the expression follow each
+        # record of the stream, also when a customisation renders a batch one
+        # document at a time.
+        if self.env.context.get("pdf_watermark_in_streams"):
+            # nested call (core renders the records one by one when it cannot
+            # split a PDF): the outermost call merges the watermark
+            return super()._render_qweb_pdf_prepare_streams(
+                report_ref, data, res_ids=res_ids
+            )
         # tell _run_pdf_engine_without_processing the watermark is merged here
-        streams, report_type = super(
-            Report, self.with_context(pdf_watermark_deferred=True)
-        )._pre_render_qweb_pdf(report_ref, res_ids=res_ids, data=data)
-        if report_type != "pdf" or not isinstance(streams, dict):
-            return streams, report_type
+        streams = super(
+            Report, self.with_context(pdf_watermark_in_streams=True)
+        )._render_qweb_pdf_prepare_streams(report_ref, data, res_ids=res_ids)
+        if not isinstance(streams, dict):
+            return streams  # html fallback when no PDF engine is set up
         report_sudo = self._get_report(report_ref)
         for res_id, stream_data in streams.items():
             stream = stream_data.get("stream")
@@ -86,7 +94,7 @@ class Report(models.Model):
             )
             if watermarked is not content:
                 stream_data["stream"] = BytesIO(watermarked)
-        return streams, report_type
+        return streams
 
     @staticmethod
     def _get_watermark_content(value):
@@ -208,8 +216,9 @@ class Report(models.Model):
             specific_paperformat_args=specific_paperformat_args,
             **kwargs,
         )
-        if self.env.context.get("pdf_watermark_deferred"):
-            # rendered through _pre_render_qweb_pdf, which merges it per record
+        if self.env.context.get("pdf_watermark_in_streams"):
+            # rendered through _render_qweb_pdf_prepare_streams, which merges
+            # it per record
             return result
         # direct callers (account, stock reports...)
         return self._apply_pdf_watermark(result, report_ref)

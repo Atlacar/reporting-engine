@@ -80,7 +80,7 @@ class TestReportQwebPdfWatermark(HttpCase):
         self._test_report_images(3)
 
     def test_watermark_merged_once_by_wkhtmltopdf(self):
-        """Rendered through ``_pre_render_qweb_pdf`` and the engine's
+        """Rendered through ``_render_qweb_pdf_prepare_streams`` and the engine's
         ``_run_pdf_engine_without_processing``: merged by the former only."""
         Report = self.registry["ir.actions.report"]
         original = Report._apply_pdf_watermark
@@ -96,7 +96,7 @@ class TestReportQwebPdfWatermark(HttpCase):
         self.assertEqual(pdf.count(b"/Subtype /Image"), 3)
 
     def test_direct_engine_call_merged_once(self):
-        """account/stock reports call the engine without ``_pre_render_qweb_pdf``."""
+        """account/stock reports call the engine without the streams preparation."""
         Report = self.registry["ir.actions.report"]
         original = Report._apply_pdf_watermark
         report = self.test_report.with_context(force_report_rendering=True)
