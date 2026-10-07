@@ -56,6 +56,19 @@ class Report(models.Model):
             self = self.with_context(res_ids=res_ids)
         return super()._render_qweb_pdf(report_ref, res_ids=res_ids, data=data)
 
+    def _render_qweb_pdf_prepare_streams(self, report_ref, data, res_ids=None):
+        # The watermark is merged while wkhtmltopdf output is produced, for the
+        # records of that very call. Callers rendering one document at a time
+        # (core does it when it cannot split a PDF, customisations do it to
+        # restart page numbers) must be watermarked with the company and the
+        # expression of that document, not of the whole batch (res_ids set by
+        # _render_qweb_pdf) nor of nothing (direct callers).
+        if res_ids:
+            self = self.with_context(res_ids=list(res_ids))
+        return super()._render_qweb_pdf_prepare_streams(
+            report_ref, data, res_ids=res_ids
+        )
+
     @staticmethod
     def pdf_has_usable_pages(numpages):
         if numpages < 1:
@@ -131,8 +144,8 @@ class Report(models.Model):
                     resolution = resolution[0]
                 image.save(pdf_buffer, "pdf", resolution=resolution)
                 pdf_watermark = PdfReader(pdf_buffer)
-            except Exception as e:
-                logger.exception("Failed to load watermark", e)
+            except Exception:
+                logger.exception("Failed to load watermark")
 
         if not pdf_watermark:
             logger.error("No usable watermark found, got %s...", watermark[:100])

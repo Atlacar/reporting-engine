@@ -26,3 +26,9 @@
 ## 18.0.1.0.0 (2025-01-06)
 
 - \[MIG\] Migration to V18.
+
+## 18.0.1.1.1
+
+- \[FIX\] The watermark follows the records of each rendered stream, so batches
+  of documents of several companies are watermarked per document.
+- \[FIX\] Unusable watermark data is logged without failing the logging call.
