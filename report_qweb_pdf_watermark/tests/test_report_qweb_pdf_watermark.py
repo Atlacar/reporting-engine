@@ -94,6 +94,68 @@ class TestReportQwebPdfWatermark(HttpCase):
         self.assertTrue(any("Failed to load watermark" in o for o in logs.output))
         self.assertTrue(any("No usable watermark found" in o for o in logs.output))
 
+    def _record_stream_images(self, report, record):
+        """Images of the PDF stream prepared for a single record, the way
+        callers rendering one document at a time (e.g. per order) do it."""
+        streams = report._render_qweb_pdf_prepare_streams(
+            report.report_name, {}, res_ids=record.ids
+        )
+        return streams[record.id]["stream"].getvalue().count(b"/Subtype /Image")
+
+    def test_company_watermark_follows_each_rendered_record(self):
+        company_a = self.env.user.company_id
+        company_b = self.env["res.company"].create({"name": "Watermark Co B"})
+        user_a = self.env.user
+        user_b = self.env["res.users"].create(
+            {
+                "name": "Watermark user B",
+                "login": "watermark_user_b",
+                "company_id": company_b.id,
+                "company_ids": [Command.set(company_b.ids)],
+            }
+        )
+        company_a.pdf_watermark = company_a.logo
+        company_b.pdf_watermark = False
+        self.test_report.write(
+            {"pdf_watermark_expression": False, "use_company_watermark": True}
+        )
+        # the context of a batch print carries every id (as _render_qweb_pdf
+        # sets it), but each record is rendered, and watermarked, on its own
+        report = self.test_report.with_context(
+            res_ids=(user_a | user_b).ids, force_report_rendering=True
+        )
+        self.assertEqual(
+            self._record_stream_images(report, user_a),
+            self._record_stream_images(report, user_b) + 1,
+            "company A has a watermark, company B has none",
+        )
+        company_b.pdf_watermark = company_a.logo
+        company_a.pdf_watermark = False
+        self.assertEqual(
+            self._record_stream_images(report, user_b),
+            self._record_stream_images(report, user_a) + 1,
+            "each stream follows the company of its own record",
+        )
+
+    def test_expression_watermark_follows_each_rendered_record(self):
+        user_a = self.env.user
+        company_b = self.env["res.company"].create({"name": "Watermark Co B"})
+        company_b.logo = False
+        user_b = self.env["res.users"].create(
+            {
+                "name": "Watermark user B",
+                "login": "watermark_user_b",
+                "company_id": company_b.id,
+                "company_ids": [Command.set(company_b.ids)],
+            }
+        )
+        # no ``res_ids`` in the context: a caller going through
+        # _render_qweb_pdf_prepare_streams directly
+        report = self.test_report.with_context(force_report_rendering=True)
+        with_logo = self._record_stream_images(report, user_a)
+        without_logo = self._record_stream_images(report, user_b)
+        self.assertGreater(with_logo, without_logo)
+
     def _test_report_images(self, number):
         pdf, _ = (
             self.env["ir.actions.report"]
