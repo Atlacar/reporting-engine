@@ -10,6 +10,7 @@ msgstr ""
 "PO-Revision-Date: 2026-10-07 13:59+0000\n"
 "Last-Translator: \n"
 "Language-Team: \n"
+"Language: zh_CN\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: \n"
@@ -21,30 +22,32 @@ msgid ""
 "An expression yielding the base64 encoded data to be used as watermark. \n"
 "You have access to variables `env` and `docs`"
 msgstr ""
+"返回用作水印的 base64 编码数据的表达式。\n"
+"您可以使用变量 `env` 和 `docs`"
 
 #. module: report_qweb_pdf_watermark
 #: model:ir.model,name:report_qweb_pdf_watermark.model_res_company
 msgid "Companies"
-msgstr ""
+msgstr "公司"
 
 #. module: report_qweb_pdf_watermark
 #: model:ir.model,name:report_qweb_pdf_watermark.model_base_document_layout
 msgid "Company Document Layout"
-msgstr ""
+msgstr "公司单据布局"
 
 #. module: report_qweb_pdf_watermark
 #: model:ir.model.fields,field_description:report_qweb_pdf_watermark.field_base_document_layout__display_name
 #: model:ir.model.fields,field_description:report_qweb_pdf_watermark.field_ir_actions_report__display_name
 #: model:ir.model.fields,field_description:report_qweb_pdf_watermark.field_res_company__display_name
 msgid "Display Name"
-msgstr ""
+msgstr "显示名称"
 
 #. module: report_qweb_pdf_watermark
 #: model:ir.model.fields,field_description:report_qweb_pdf_watermark.field_base_document_layout__id
 #: model:ir.model.fields,field_description:report_qweb_pdf_watermark.field_ir_actions_report__id
 #: model:ir.model.fields,field_description:report_qweb_pdf_watermark.field_res_company__id
 msgid "ID"
-msgstr ""
+msgstr "ID"
 
 #. module: report_qweb_pdf_watermark
 #: model_terms:ir.ui.view,arch_db:report_qweb_pdf_watermark.view_base_document_layout
@@ -52,47 +55,47 @@ msgid ""
 "Note that the watermark is not reflected in the preview to the right.\n"
 "                    Use the <b>Preview Document</b> button to see the watermark in the generated PDF."
 msgstr ""
+"请注意，右侧的预览中不会显示水印。\n"
+"                    请使用<b>预览单据</b>按钮在生成的 PDF 中查看水印。"
 
 #. module: report_qweb_pdf_watermark
 #: model:ir.model,name:report_qweb_pdf_watermark.model_ir_actions_report
 msgid "Report Action"
-msgstr ""
+msgstr "报表动作"
 
 #. module: report_qweb_pdf_watermark
 #: model_terms:ir.ui.view,arch_db:report_qweb_pdf_watermark.view_company_form
-msgid ""
-"Upload an pdf file to use as an Company watermark. You need to activate the "
-"setting 'use company watermark' on the reports where you want to use it."
-msgstr ""
+msgid "Upload an pdf file to use as an Company watermark. You need to activate the setting 'use company watermark' on the reports where you want to use it."
+msgstr "上传 PDF 文件用作公司水印。您需要在要使用该水印的报表上启用“使用公司水印”设置。"
 
 #. module: report_qweb_pdf_watermark
 #: model:ir.model.fields,help:report_qweb_pdf_watermark.field_ir_actions_report__pdf_watermark
 msgid "Upload an pdf file to use as an watermark on this report."
-msgstr ""
+msgstr "上传 PDF 文件用作此报表的水印。"
 
 #. module: report_qweb_pdf_watermark
 #: model:ir.model.fields,field_description:report_qweb_pdf_watermark.field_ir_actions_report__use_company_watermark
 msgid "Use Company Watermark"
-msgstr ""
+msgstr "使用公司水印"
 
 #. module: report_qweb_pdf_watermark
 #: model:ir.model.fields,help:report_qweb_pdf_watermark.field_ir_actions_report__use_company_watermark
 msgid "Use the pdf watermark defined globally in the company settings."
-msgstr ""
+msgstr "使用公司设置中全局定义的 PDF 水印。"
 
 #. module: report_qweb_pdf_watermark
 #: model:ir.model.fields,field_description:report_qweb_pdf_watermark.field_base_document_layout__pdf_watermark
 #: model:ir.model.fields,field_description:report_qweb_pdf_watermark.field_ir_actions_report__pdf_watermark
 #: model:ir.model.fields,field_description:report_qweb_pdf_watermark.field_res_company__pdf_watermark
 msgid "Watermark"
-msgstr ""
+msgstr "水印"
 
 #. module: report_qweb_pdf_watermark
 #: model:ir.actions.report,name:report_qweb_pdf_watermark.demo_report
 msgid "Watermark Demo report"
-msgstr ""
+msgstr "水印演示报表"
 
 #. module: report_qweb_pdf_watermark
 #: model:ir.model.fields,field_description:report_qweb_pdf_watermark.field_ir_actions_report__pdf_watermark_expression
 msgid "Watermark expression"
-msgstr ""
+msgstr "水印表达式"
