@@ -21,6 +21,13 @@ except ImportError:
     logger.error("ImportError: The PdfImagePlugin could not be imported")
 
 
+class _WatermarkState:
+    """Mutable marker, shared through the context, telling whether the
+    watermark was already merged while rendering a PDF."""
+
+    applied = False
+
+
 class Report(models.Model):
     _inherit = "ir.actions.report"
 
@@ -89,30 +96,13 @@ class Report(models.Model):
             )
         return True
 
-    @api.model
-    def _run_pdf_engine_without_processing(
-        self,
-        engine_name,
-        bodies,
-        report_ref=False,
-        *,
-        header=None,
-        footer=None,
-        landscape=False,
-        specific_paperformat_args=None,
-        **kwargs,
-    ):
-        result = super()._run_pdf_engine_without_processing(
-            engine_name,
-            bodies,
-            report_ref=report_ref,
-            header=header,
-            footer=footer,
-            landscape=landscape,
-            specific_paperformat_args=specific_paperformat_args,
-            **kwargs,
-        )
+    def _apply_pdf_watermark(self, result, report_ref=False):
+        """Merge the configured watermark (if any) below the pages of ``result``.
 
+        Common to every PDF engine: it is called from whichever entry point
+        the engine goes through (see ``_run_pdf_engine`` and
+        ``_run_pdf_engine_without_processing``).
+        """
         docids = self.env.context.get("res_ids", False)
         report_sudo = self._get_report(report_ref) if report_ref else self
         watermark = None
@@ -177,3 +167,49 @@ class Report(models.Model):
         pdf.write(pdf_content)
 
         return pdf_content.getvalue()
+
+    @api.model
+    def _run_pdf_engine_without_processing(
+        self,
+        engine_name,
+        bodies,
+        report_ref=False,
+        *,
+        header=None,
+        footer=None,
+        landscape=False,
+        specific_paperformat_args=None,
+        **kwargs,
+    ):
+        result = super()._run_pdf_engine_without_processing(
+            engine_name,
+            bodies,
+            report_ref=report_ref,
+            header=header,
+            footer=footer,
+            landscape=landscape,
+            specific_paperformat_args=specific_paperformat_args,
+            **kwargs,
+        )
+        state = self.env.context.get("pdf_watermark_state")
+        if state is not None:
+            state.applied = True
+        return self._apply_pdf_watermark(result, report_ref)
+
+    @api.model
+    def _run_pdf_engine(
+        self, engine_name, html, report_ref=False, landscape=False, **kwargs
+    ):
+        # wkhtmltopdf goes through _run_pdf_engine_without_processing (where
+        # the watermark is applied, so that direct callers of that method get
+        # it too) but other engines, e.g. Paper Muncher, render straight from
+        # _run_pdf_engine: apply it here when the engine did not.
+        state = _WatermarkState()
+        content, html_ids = super(
+            Report, self.with_context(pdf_watermark_state=state)
+        )._run_pdf_engine(
+            engine_name, html, report_ref=report_ref, landscape=landscape, **kwargs
+        )
+        if not state.applied:
+            content = self._apply_pdf_watermark(content, report_ref)
+        return content, html_ids

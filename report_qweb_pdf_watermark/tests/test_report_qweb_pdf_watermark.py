@@ -1,10 +1,15 @@
 # © 2016 Therp BV <http://therp.nl>
 # Copyright 2023 Onestein - Anjeel Haria
 # License AGPL-3.0 or later (http://www.gnu.org/licenses/agpl.html).
+import base64
+from io import BytesIO
+from unittest import mock
+
 from PIL import Image
 
 from odoo import Command
 from odoo.tests.common import HttpCase, TransactionCase, tagged
+from odoo.tools.pdf import PdfReader
 
 
 class TestReportQwebPdfWatermark(HttpCase):
@@ -73,6 +78,17 @@ class TestReportQwebPdfWatermark(HttpCase):
         self.test_report.write({"use_company_watermark": True})
         self.env.user.company_id.write({"pdf_watermark": self.env.user.company_id.logo})
         self._test_report_images(3)
+
+    def test_watermark_merged_once_by_wkhtmltopdf(self):
+        """wkhtmltopdf renders through ``_run_pdf_engine_without_processing``:
+        the fallback in ``_run_pdf_engine`` must not merge a second time."""
+        Report = self.registry["ir.actions.report"]
+        original = Report._apply_pdf_watermark
+        with mock.patch.object(
+            Report, "_apply_pdf_watermark", autospec=True, side_effect=original
+        ) as apply:
+            self._test_report_images(3)
+        self.assertEqual(apply.call_count, 1)
 
     def _test_report_images(self, number):
         pdf, _ = (
@@ -164,3 +180,124 @@ class TestReportQwebPdfWatermarkCompany(TransactionCase):
         self.assertEqual(
             report._get_watermark_company(account.ids, report), other_company
         )
+
+
+def _make_pdf(pages=1, color="red"):
+    """A PDF whose pages each hold one image (counted through /Subtype /Image)."""
+    first = Image.new("RGB", (60, 60), color)
+    buffer = BytesIO()
+    first.save(
+        buffer,
+        "pdf",
+        save_all=True,
+        append_images=[Image.new("RGB", (60, 60), color) for _ in range(pages - 1)],
+    )
+    return buffer.getvalue()
+
+
+# post_install, so that auto-installed modules such as iap are available
+@tagged("post_install", "-at_install")
+class TestReportQwebPdfWatermarkEngines(TransactionCase):
+    """The watermark is merged whatever the PDF engine, once, per company."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.watermark = base64.b64encode(_make_pdf(1, "blue")).decode()
+        cls.plain_pdf = _make_pdf(2)
+        cls.report = cls.env["ir.actions.report"].create(
+            {
+                "name": "Test Watermark Engine Report",
+                "model": "res.partner",
+                "report_type": "qweb-pdf",
+                "report_name": "web.report_layout",
+                "pdf_watermark": cls.watermark,
+            }
+        )
+
+    def _images(self, pdf):
+        return pdf.count(b"/Subtype /Image")
+
+    def test_apply_keeps_every_page(self):
+        result = self.report._apply_pdf_watermark(self.plain_pdf, self.report.report_name)
+        self.assertEqual(len(PdfReader(BytesIO(result)).pages), 2)
+        self.assertGreater(self._images(result), self._images(self.plain_pdf))
+
+    def test_apply_without_watermark_is_identity(self):
+        self.report.pdf_watermark = False
+        result = self.report._apply_pdf_watermark(self.plain_pdf, self.report.report_name)
+        self.assertEqual(result, self.plain_pdf)
+
+    def test_apply_image_watermark(self):
+        buffer = BytesIO()
+        Image.new("RGBA", (20, 20), (0, 255, 0, 128)).save(buffer, "PNG")
+        self.report.pdf_watermark = base64.b64encode(buffer.getvalue()).decode()
+        result = self.report._apply_pdf_watermark(self.plain_pdf, self.report.report_name)
+        self.assertEqual(len(PdfReader(BytesIO(result)).pages), 2)
+        self.assertGreater(self._images(result), self._images(self.plain_pdf))
+
+    def test_company_watermark_follows_document_company(self):
+        other_company = self.env["res.company"].create(
+            {"name": "Watermark Co", "pdf_watermark": self.watermark}
+        )
+        self.env.company.pdf_watermark = False
+        report = self.report
+        report.write({"pdf_watermark": False, "use_company_watermark": True})
+        partner = self.env["res.partner"].create(
+            {"name": "Partner", "company_id": other_company.id}
+        )
+        shared = self.env["res.partner"].create({"name": "Shared"})
+        in_other = report.with_context(res_ids=partner.ids)._apply_pdf_watermark(
+            self.plain_pdf, report.report_name
+        )
+        self.assertGreater(self._images(in_other), self._images(self.plain_pdf))
+        # no company on the document: the (watermark-less) env company
+        no_watermark = report.with_context(res_ids=shared.ids)._apply_pdf_watermark(
+            self.plain_pdf, report.report_name
+        )
+        self.assertEqual(no_watermark, self.plain_pdf)
+
+    def test_document_layout_wizard_sets_company_watermark(self):
+        wizard = self.env["base.document.layout"].create({})
+        self.assertEqual(wizard.company_id, self.env.company)
+        wizard.pdf_watermark = self.watermark
+        self.assertEqual(
+            self.env.company.pdf_watermark.content, wizard.pdf_watermark.content
+        )
+        self.assertTrue(self.env.company.pdf_watermark)
+        arch = self.env["base.document.layout"].get_view(
+            self.env.ref("web.view_base_document_layout").id
+        )["arch"]
+        self.assertIn('name="pdf_watermark"', arch)
+
+    def test_wraps_paper_muncher_engine(self):
+        """This module must come before Paper Muncher in the MRO, see manifest."""
+        mro = [cls.__module__ for cls in type(self.env["ir.actions.report"]).__mro__]
+        muncher = "odoo.addons.base_report_paper_muncher.models.ir_actions_report"
+        if muncher not in mro:
+            self.skipTest("base_report_paper_muncher is not installed")
+        this = "odoo.addons.report_qweb_pdf_watermark.models.report"
+        self.assertLess(mro.index(this), mro.index(muncher))
+
+    def test_paper_muncher_engine(self):
+        """An engine rendering straight from ``_run_pdf_engine`` (Paper Muncher)."""
+        if "base_report_paper_muncher" not in self.registry._init_modules and not (
+            self.env["ir.module.module"].search_count(
+                [("name", "=", "base_report_paper_muncher"), ("state", "=", "installed")]
+            )
+        ):
+            self.skipTest("base_report_paper_muncher is not installed")
+        Report = self.registry["ir.actions.report"]
+        html = (
+            "<html><body><main><div class='article' data-oe-model='res.partner' "
+            "data-oe-id='1'>x</div></main></body></html>"
+        )
+        with mock.patch.object(
+            Report, "_run_paper_muncher", return_value=self.plain_pdf
+        ) as muncher:
+            content, _ids = self.report.with_context(res_ids=[1])._run_pdf_engine(
+                "paper-muncher", html, report_ref=self.report.report_name
+            )
+        muncher.assert_called_once()
+        self.assertEqual(len(PdfReader(BytesIO(content)).pages), 2)
+        self.assertGreater(self._images(content), self._images(self.plain_pdf))
