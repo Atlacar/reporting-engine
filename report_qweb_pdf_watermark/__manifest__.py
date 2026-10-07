@@ -9,12 +9,7 @@
     "development_status": "Production/Stable",
     "summary": "Add watermarks to your QWEB PDF reports",
     "website": "https://github.com/OCA/reporting-engine",
-    # base_setup: the watermark must wrap every PDF engine, also the ones that
-    # do not call super() for their own engine (Paper Muncher). Modules are
-    # loaded by (depth, name) and later modules come first in the MRO, so this
-    # module has to be at least as deep as base_report_paper_muncher (which
-    # depends on base_setup) and sort after it by name.
-    "depends": ["web", "base_setup"],
+    "depends": ["web"],
     "maintainers": ["hbrunn"],
     "data": [
         "views/ir_actions_report_xml.xml",

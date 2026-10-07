@@ -21,13 +21,6 @@ except ImportError:
     logger.error("ImportError: The PdfImagePlugin could not be imported")
 
 
-class _WatermarkState:
-    """Mutable marker, shared through the context, telling whether the
-    watermark was already merged while rendering a PDF."""
-
-    applied = False
-
-
 class Report(models.Model):
     _inherit = "ir.actions.report"
 
@@ -67,9 +60,33 @@ class Report(models.Model):
     def _pre_render_qweb_pdf(self, report_ref, res_ids=None, data=None):
         # In 20.0 the PDF is no longer only produced by ``_render_qweb_pdf``:
         # other callers (e.g. account.move.send) use ``_pre_render_qweb_pdf``.
+        # No PDF engine overrides this method, so merging the watermark in the
+        # streams it returns works with every engine and whatever the module
+        # load order (engines such as Paper Muncher do not call ``super()``
+        # for their own engine in ``_run_pdf_engine*``).
         if not self.env.context.get("res_ids"):
             self = self.with_context(res_ids=res_ids)
-        return super()._pre_render_qweb_pdf(report_ref, res_ids=res_ids, data=data)
+        # tell _run_pdf_engine_without_processing the watermark is merged here
+        streams, report_type = super(
+            Report, self.with_context(pdf_watermark_deferred=True)
+        )._pre_render_qweb_pdf(report_ref, res_ids=res_ids, data=data)
+        if report_type != "pdf" or not isinstance(streams, dict):
+            return streams, report_type
+        report_sudo = self._get_report(report_ref)
+        for res_id, stream_data in streams.items():
+            stream = stream_data.get("stream")
+            if not stream:
+                continue
+            if stream_data.get("attachment") and report_sudo.attachment_use:
+                continue  # stored PDF, the watermark is already in it
+            ids = [res_id] if res_id else list(res_ids or [])
+            content = stream.getvalue()
+            watermarked = self.with_context(res_ids=ids)._apply_pdf_watermark(
+                content, report_ref
+            )
+            if watermarked is not content:
+                stream_data["stream"] = BytesIO(watermarked)
+        return streams, report_type
 
     @staticmethod
     def _get_watermark_content(value):
@@ -191,25 +208,8 @@ class Report(models.Model):
             specific_paperformat_args=specific_paperformat_args,
             **kwargs,
         )
-        state = self.env.context.get("pdf_watermark_state")
-        if state is not None:
-            state.applied = True
+        if self.env.context.get("pdf_watermark_deferred"):
+            # rendered through _pre_render_qweb_pdf, which merges it per record
+            return result
+        # direct callers (account, stock reports...)
         return self._apply_pdf_watermark(result, report_ref)
-
-    @api.model
-    def _run_pdf_engine(
-        self, engine_name, html, report_ref=False, landscape=False, **kwargs
-    ):
-        # wkhtmltopdf goes through _run_pdf_engine_without_processing (where
-        # the watermark is applied, so that direct callers of that method get
-        # it too) but other engines, e.g. Paper Muncher, render straight from
-        # _run_pdf_engine: apply it here when the engine did not.
-        state = _WatermarkState()
-        content, html_ids = super(
-            Report, self.with_context(pdf_watermark_state=state)
-        )._run_pdf_engine(
-            engine_name, html, report_ref=report_ref, landscape=landscape, **kwargs
-        )
-        if not state.applied:
-            content = self._apply_pdf_watermark(content, report_ref)
-        return content, html_ids

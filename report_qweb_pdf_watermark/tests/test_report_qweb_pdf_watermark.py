@@ -80,15 +80,35 @@ class TestReportQwebPdfWatermark(HttpCase):
         self._test_report_images(3)
 
     def test_watermark_merged_once_by_wkhtmltopdf(self):
-        """wkhtmltopdf renders through ``_run_pdf_engine_without_processing``:
-        the fallback in ``_run_pdf_engine`` must not merge a second time."""
+        """Rendered through ``_pre_render_qweb_pdf`` and the engine's
+        ``_run_pdf_engine_without_processing``: merged by the former only."""
         Report = self.registry["ir.actions.report"]
         original = Report._apply_pdf_watermark
         with mock.patch.object(
             Report, "_apply_pdf_watermark", autospec=True, side_effect=original
         ) as apply:
-            self._test_report_images(3)
+            pdf, _ = (
+                self.env["ir.actions.report"]
+                .with_context(force_report_rendering=True)
+                ._render_qweb_pdf(self.test_report.report_name, self.env.user.ids)
+            )
         self.assertEqual(apply.call_count, 1)
+        self.assertEqual(pdf.count(b"/Subtype /Image"), 3)
+
+    def test_direct_engine_call_merged_once(self):
+        """account/stock reports call the engine without ``_pre_render_qweb_pdf``."""
+        Report = self.registry["ir.actions.report"]
+        original = Report._apply_pdf_watermark
+        report = self.test_report.with_context(force_report_rendering=True)
+        report.pdf_watermark = self.env.user.company_id.logo
+        with mock.patch.object(
+            Report, "_apply_pdf_watermark", autospec=True, side_effect=original
+        ) as apply:
+            pdf = report._run_pdf_engine_without_processing(
+                "wkhtmltopdf", ["<html><body><p>direct</p></body></html>"]
+            )
+        self.assertEqual(apply.call_count, 1)
+        self.assertEqual(pdf.count(b"/Subtype /Image"), 1)
 
     def _test_report_images(self, number):
         pdf, _ = (
@@ -270,34 +290,49 @@ class TestReportQwebPdfWatermarkEngines(TransactionCase):
         )["arch"]
         self.assertIn('name="pdf_watermark"', arch)
 
-    def test_wraps_paper_muncher_engine(self):
-        """This module must come before Paper Muncher in the MRO, see manifest."""
-        mro = [cls.__module__ for cls in type(self.env["ir.actions.report"]).__mro__]
-        muncher = "odoo.addons.base_report_paper_muncher.models.ir_actions_report"
-        if muncher not in mro:
-            self.skipTest("base_report_paper_muncher is not installed")
-        this = "odoo.addons.report_qweb_pdf_watermark.models.report"
-        self.assertLess(mro.index(this), mro.index(muncher))
-
     def test_paper_muncher_engine(self):
-        """An engine rendering straight from ``_run_pdf_engine`` (Paper Muncher)."""
-        if "base_report_paper_muncher" not in self.registry._init_modules and not (
-            self.env["ir.module.module"].search_count(
-                [("name", "=", "base_report_paper_muncher"), ("state", "=", "installed")]
-            )
+        """An engine skipping ``_run_pdf_engine_without_processing`` (Paper
+        Muncher): watermark merged, once, whatever the module load order."""
+        if not self.env["ir.module.module"].search_count(
+            [("name", "=", "base_report_paper_muncher"), ("state", "=", "installed")]
         ):
             self.skipTest("base_report_paper_muncher is not installed")
-        Report = self.registry["ir.actions.report"]
-        html = (
-            "<html><body><main><div class='article' data-oe-model='res.partner' "
-            "data-oe-id='1'>x</div></main></body></html>"
+        self.env["ir.ui.view"].create(
+            {
+                "name": "Test Watermark Muncher Template",
+                "type": "qweb",
+                "key": "report_qweb_pdf_watermark.test_muncher_view",
+                "arch": """
+                <t t-name="report_qweb_pdf_watermark.test_muncher_view">
+                    <t t-call="web.html_container">
+                        <main><div class="article" t-foreach="docs" t-as="doc"
+                            t-att-data-oe-model="doc._name" t-att-data-oe-id="doc.id">
+                            <t t-out="doc.name"/></div></main>
+                    </t>
+                </t>""",
+            }
         )
+        report = self.report.copy(
+            {
+                "report_type": "qweb-pdf-paper-muncher",
+                "report_name": "report_qweb_pdf_watermark.test_muncher_view",
+                "model": "res.users",
+            }
+        )
+        one_page = _make_pdf(1)
+        Report = self.registry["ir.actions.report"]
+        original = Report._apply_pdf_watermark
         with mock.patch.object(
-            Report, "_run_paper_muncher", return_value=self.plain_pdf
-        ) as muncher:
-            content, _ids = self.report.with_context(res_ids=[1])._run_pdf_engine(
-                "paper-muncher", html, report_ref=self.report.report_name
+            Report, "_run_paper_muncher", return_value=one_page
+        ) as muncher, mock.patch.object(
+            Report, "get_pdf_engine_state", return_value="ok"
+        ), mock.patch.object(
+            Report, "_apply_pdf_watermark", autospec=True, side_effect=original
+        ) as apply:
+            pdf, _ = report.with_context(force_report_rendering=True)._render_qweb_pdf(
+                report.report_name, self.env.user.ids
             )
         muncher.assert_called_once()
-        self.assertEqual(len(PdfReader(BytesIO(content)).pages), 2)
-        self.assertGreater(self._images(content), self._images(self.plain_pdf))
+        self.assertEqual(apply.call_count, 1)
+        self.assertEqual(len(PdfReader(BytesIO(pdf)).pages), 1)
+        self.assertGreater(self._images(pdf), self._images(one_page))
