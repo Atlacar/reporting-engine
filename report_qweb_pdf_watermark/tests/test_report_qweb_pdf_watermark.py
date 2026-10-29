@@ -12,6 +12,9 @@ from odoo.tests.common import HttpCase, TransactionCase, tagged
 from odoo.tools.pdf import PdfReader
 
 
+# post_install: rendering web.external_layout needs the assets of all
+# installed modules (e.g. website) to be loaded
+@tagged("post_install", "-at_install")
 class TestReportQwebPdfWatermark(HttpCase):
     @classmethod
     def setUpClass(cls):
@@ -109,6 +112,83 @@ class TestReportQwebPdfWatermark(HttpCase):
             )
         self.assertEqual(apply.call_count, 1)
         self.assertEqual(pdf.count(b"/Subtype /Image"), 1)
+
+    def test_report_qweb_pdf_watermark_invalid(self):
+        # unusable watermark data is logged and the report is left untouched
+        self.test_report.write(
+            {
+                "pdf_watermark_expression": False,
+                "pdf_watermark": base64.b64encode(b"not a pdf nor an image").decode(),
+            }
+        )
+        with self.assertLogs(
+            "odoo.addons.report_qweb_pdf_watermark.models.report", level="ERROR"
+        ) as logs:
+            self._test_report_images(2)
+        self.assertTrue(any("Failed to load watermark" in o for o in logs.output))
+        self.assertTrue(any("No usable watermark found" in o for o in logs.output))
+
+    def _record_stream_images(self, report, record):
+        """Images of the PDF stream prepared for a single record, the way
+        callers rendering one document at a time (e.g. per order) do it."""
+        streams = report._render_qweb_pdf_prepare_streams(
+            report.report_name, {}, res_ids=record.ids
+        )
+        return streams[record.id]["stream"].getvalue().count(b"/Subtype /Image")
+
+    def test_company_watermark_follows_each_rendered_record(self):
+        company_a = self.env.user.company_id
+        company_b = self.env["res.company"].create({"name": "Watermark Co B"})
+        user_a = self.env.user
+        user_b = self.env["res.users"].create(
+            {
+                "name": "Watermark user B",
+                "login": "watermark_user_b",
+                "company_id": company_b.id,
+                "company_ids": [Command.set(company_b.ids)],
+            }
+        )
+        company_a.pdf_watermark = company_a.logo
+        company_b.pdf_watermark = False
+        self.test_report.write(
+            {"pdf_watermark_expression": False, "use_company_watermark": True}
+        )
+        # the context of a batch print carries every id (as _render_qweb_pdf
+        # sets it), but each record is rendered, and watermarked, on its own
+        report = self.test_report.with_context(
+            res_ids=(user_a | user_b).ids, force_report_rendering=True
+        )
+        self.assertEqual(
+            self._record_stream_images(report, user_a),
+            self._record_stream_images(report, user_b) + 1,
+            "company A has a watermark, company B has none",
+        )
+        company_b.pdf_watermark = company_a.logo
+        company_a.pdf_watermark = False
+        self.assertEqual(
+            self._record_stream_images(report, user_b),
+            self._record_stream_images(report, user_a) + 1,
+            "each stream follows the company of its own record",
+        )
+
+    def test_expression_watermark_follows_each_rendered_record(self):
+        user_a = self.env.user
+        company_b = self.env["res.company"].create({"name": "Watermark Co B"})
+        company_b.logo = False
+        user_b = self.env["res.users"].create(
+            {
+                "name": "Watermark user B",
+                "login": "watermark_user_b",
+                "company_id": company_b.id,
+                "company_ids": [Command.set(company_b.ids)],
+            }
+        )
+        # no ``res_ids`` in the context: a caller going through
+        # _render_qweb_pdf_prepare_streams directly
+        report = self.test_report.with_context(force_report_rendering=True)
+        with_logo = self._record_stream_images(report, user_a)
+        without_logo = self._record_stream_images(report, user_b)
+        self.assertGreater(with_logo, without_logo)
 
     def _test_report_images(self, number):
         pdf, _ = (
